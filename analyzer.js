@@ -17,8 +17,17 @@ async function analyzeStats() {
   rawStatsSnapshot.forEach(doc => {
     const data = doc.data();
     const date = data.timestamp.toDate();
-    const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday...
-    const hour = date.getHours();
+
+    // --- FIX: Convert timestamp to Israeli timezone before extracting parts ---
+    // This correctly handles DST (UTC+2 / UTC+3)
+    const hourString = date.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false });
+    let hour = parseInt(hourString, 10);
+    if (hour === 24) hour = 0; // Normalize midnight from 24 to 0
+
+    const dayString = date.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', weekday: 'long' });
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dayOfWeek = days.indexOf(dayString); // This gives 0 for Sunday, etc.
+
     const lotId = data.lotId;
     const status = data.status;
 
