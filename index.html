@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>בדיקת מצב חניונים עם ניתוח סטטיסטי</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Assistant', sans-serif;
+        }
+        .status-display { min-height: 60px; display: flex; align-items: center; justify-content: center; }
+        .status-display img { max-height: 50px; border-radius: 0.5rem; }
+        .status-card { color: white; }
+        #analysis-section { display: none; }
+        #app-container.loading::after {
+            content: 'טוען חיבור למסד הנתונים...';
+            position: fixed; inset: 0; background: rgba(255, 255, 255, 0.9);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.5rem; font-weight: bold; color: #334155; z-index: 100;
+        }
+        .bar { height: 1.5rem; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; color: white; transition: width 0.3s ease-in-out; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); }
+        .bar-green { background-color: #22c55e; }
+        .bar-amber { background-color: #f59e0b; }
+        .bar-red { background-color: #ef4444; }
+        .bar-slate { background-color: #64748b; }
+    </style>
+</head>
+<body class="bg-slate-100 py-10">
+    <div id="app-container" class="w-full max-w-6xl mx-auto px-4 loading">
+        <!-- כותרת -->
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-slate-800 mb-2">בדיקת חניונים בזמן אמת</h1>
+            <p id="last-updated" class="text-slate-500">המידע מתעדכן אוטומטית.</p>
+        </div>
+
+        <!-- תצוגה בזמן אמת -->
+        <div id="parking-lots-container" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
+
+        <!-- כפתור ניווט -->
+        <div class="mt-12 text-center">
+            <button id="toggle-analysis-btn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-all text-lg">
+                הצג ניתוח סטטיסטי
+            </button>
+        </div>
+
+        <!-- אזור ניתוח סטטיסטי -->
+        <div id="analysis-section" class="mt-8 bg-white p-6 rounded-xl shadow-lg">
+            <h2 class="text-2xl font-bold text-center text-slate-800 mb-4">ניתוח סטטיסטי לפי יום ושעה</h2>
+            <p class="text-center text-sm text-slate-500 mb-6">הנתונים מעובדים פעם בשעה על ידי שרת. מוצגת התפלגות הסטטוסים לכל שעה.</p>
+            <div id="analysis-container"></div>
+        </div>
+        
+        <footer class="text-center mt-8 text-sm text-slate-500">
+            <p>המידע נלקח מאתר אחוזות החוף. הניתוח מבוסס על נתונים שנאספו על ידי המערכת.</p>
+        </footer>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const FETCH_TIMEOUT = 15000;
+        const parkingLots = [ { id: 122, name: 'חניון אסותא' }, { id: 3, name: 'חניון בזל' } ];
+        let db;
+
+        const appContainer = document.getElementById('app-container');
+        const container = document.getElementById('parking-lots-container');
+        const lastUpdatedElement = document.getElementById('last-updated');
+        const toggleAnalysisBtn = document.getElementById('toggle-analysis-btn');
+        const analysisSection = document.getElementById('analysis-section');
+        const analysisContainer = document.getElementById('analysis-container');
+
+        function createParkingLotCards() {
+            parkingLots.forEach(lot => {
+                container.innerHTML += `
+                    <div id="parking-lot-${lot.id}" class="bg-white rounded-xl shadow-lg text-center p-6">
+                        <h2 class="text-xl font-bold text-slate-700 mb-4 underline">${lot.name}</h2>
+                        <div class="status-card p-6 rounded-lg shadow-inner transition-colors duration-500 ease-in-out bg-orange-500">
+                            <p class="text-lg font-semibold mb-2">מצב החניון כעת:</p>
+                            <div class="status-display text-2xl font-bold"><div class="loader animate-pulse">טוען...</div></div>
+                        </div>
+                    </div>`;
+            });
+        }
+
+        async function fetchWithTimeout(resource, options = {}) {
+            const { timeout = FETCH_TIMEOUT } = options;
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), timeout);
+            const response = await fetch(resource, { ...options, signal: controller.signal });
+            clearTimeout(id);
+            return response;
+        }
+
+        async function fetchCurrentParkingStatus(lot) {
+            const targetUrl = `https://www.ahuzot.co.il/Parking/ParkingDetails/?ID=${lot.id}`;
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+            try {
+                const response = await fetchWithTimeout(proxyUrl);
+                if (!response.ok) throw new Error(`Proxy error! status: ${response.status}`);
+                const htmlText = await response.text();
+                if (!htmlText || htmlText.trim() === '') throw new Error("Proxy returned empty response.");
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(htmlText, "text/html");
+                let displayContent = 'לא נמצאה תמונה';
+                let statusText = 'סטטוס לא ידוע';
+                const statusImage = doc.querySelector('.ParkingDetailsTable img[src*="/pics/ParkingIcons/"]');
+                if (statusImage) {
+                    const relativeSrc = statusImage.getAttribute('src');
+                    const absoluteSrc = new URL(relativeSrc, 'https://www.ahuzot.co.il/').href;
+                    displayContent = `<img src="${absoluteSrc}" alt="סטטוס חנייה" class="mx-auto h-12">`;
+                    const imgSrcLower = relativeSrc.toLowerCase();
+                    if (imgSrcLower.includes('male.png')) statusText = 'החניון מלא';
+                    else if (imgSrcLower.includes('panui.png')) statusText = 'החניון פנוי';
+                    else if (imgSrcLower.includes('meat.png')) statusText = 'מעט מקומות';
+                    else if (imgSrcLower.includes('sagur.png') || imgSrcLower.includes('closed.png')) statusText = 'החניון סגור';
+                }
+                updateStatusDisplay(lot, displayContent, statusText);
+            } catch (error) {
+                console.error(`Failed to fetch status for lot ${lot.id} (${lot.name}):`, error);
+                let errorMessage = 'שגיאת תקשורת';
+                if (error.name === 'AbortError') errorMessage = 'שגיאה: זמן קצוב';
+                updateStatusDisplay(lot, errorMessage, null);
+            }
+        }
+
+        function updateStatusDisplay(lot, htmlContent, statusText) {
+            const cardElement = document.getElementById(`parking-lot-${lot.id}`);
+            if (!cardElement) return;
+            const statusDisplay = cardElement.querySelector('.status-display');
+            const titleElement = cardElement.querySelector('h2');
+            const statusCard = cardElement.querySelector('.status-card');
+            statusDisplay.innerHTML = htmlContent;
+            if (titleElement && statusText) {
+                titleElement.textContent = (statusText.includes('שגיאה') || statusText.includes('לא נמצא')) ? lot.name : `${lot.name} - ${statusText}`;
+            }
+            if (statusCard && statusText) {
+                statusCard.classList.remove('bg-green-500', 'bg-amber-500', 'bg-red-500', 'bg-slate-500', 'bg-orange-500');
+                switch (statusText) {
+                    case 'החניון פנוי': statusCard.classList.add('bg-green-500'); break;
+                    case 'מעט מקומות': statusCard.classList.add('bg-amber-500'); break;
+                    case 'החניון מלא': statusCard.classList.add('bg-red-500'); break;
+                    case 'החניון סגור': statusCard.classList.add('bg-slate-500'); break;
+                    default: statusCard.classList.add('bg-orange-500'); break;
+                }
+            }
+        }
+        
+        function fetchAllCurrentStatuses() {
+            parkingLots.forEach(fetchCurrentParkingStatus);
+            lastUpdatedElement.textContent = `עדכון אחרון בזמן אמת: ${new Date().toLocaleTimeString('he-IL')}`;
+        }
+
+        function renderAnalysis(analysisData) {
+            if (Object.keys(analysisData).length === 0) {
+                analysisContainer.innerHTML = '<p class="text-center text-slate-500">עדיין לא עובדו נתונים סטטיסטיים. השרת מנתח את הנתונים פעם בשעה. אנא נסה שוב מאוחר יותר.</p>'; return;
+            }
+            const daysInHebrew = ['יום ראשון', 'יום שני', 'יום שלישי', 'יום רביעי', 'יום חמישי', 'יום שישי', 'שבת'];
+            let html = '';
+            parkingLots.forEach(lot => {
+                html += `<div class="mb-8"><h3 class="text-xl font-bold text-center mb-4">${lot.name}</h3>`;
+                for (let day = 0; day < 7; day++) {
+                    const dayKey = `${lot.id}_${day}`;
+                    const dayData = analysisData[dayKey];
+                    if (dayData) {
+                        html += `<div class="mb-4"><h4 class="font-semibold">${daysInHebrew[day]}</h4>`;
+                        for (let hour = 0; hour < 24; hour++) {
+                            const hourData = dayData.hourlyStats[hour];
+                            if (hourData) {
+                                html += `<div class="flex items-center gap-4 my-1"><div class="w-20 text-sm font-mono text-right">${String(hour).padStart(2, '0')}:00</div><div class="flex-grow bg-gray-200 rounded-full h-6 flex overflow-hidden">`;
+                                const pGreen = (hourData['החניון פנוי'] / hourData.totalSamples) * 100;
+                                const pAmber = (hourData['מעט מקומות'] / hourData.totalSamples) * 100;
+                                const pRed = (hourData['החניון מלא'] / hourData.totalSamples) * 100;
+                                const pSlate = (hourData['החניון סגור'] / hourData.totalSamples) * 100;
+                                if(pGreen > 0) html += `<div class="bar bar-green" style="width: ${pGreen}%" title="פנוי: ${pGreen.toFixed(1)}%">${Math.round(pGreen)}%</div>`;
+                                if(pAmber > 0) html += `<div class="bar bar-amber" style="width: ${pAmber}%" title="מעט מקומות: ${pAmber.toFixed(1)}%">${Math.round(pAmber)}%</div>`;
+                                if(pRed > 0) html += `<div class="bar bar-red" style="width: ${pRed}%" title="מלא: ${pRed.toFixed(1)}%">${Math.round(pRed)}%</div>`;
+                                if(pSlate > 0) html += `<div class="bar bar-slate" style="width: ${pSlate}%" title="סגור: ${pSlate.toFixed(1)}%">${Math.round(pSlate)}%</div>`;
+                                html += `</div></div>`;
+                            }
+                        }
+                        html += `</div>`;
+                    }
+                }
+                html += `</div>`;
+            });
+            analysisContainer.innerHTML = html;
+        }
+        
+        async function startApp() {
+            try {
+                const firebaseConfig = {
+                  apiKey: "AIzaSyDbFQbf5OGRILSgchRQb9tXFDJmm9sFHDA",
+                  authDomain: "parking-stats.firebaseapp.com",
+                  projectId: "parking-stats",
+                  storageBucket: "parking-stats.appspot.com",
+                  messagingSenderId: "870298341911",
+                  appId: "1:870298341911:web:c50a51a64720e87db08252",
+                  measurementId: "G-WVM9NNCV70"
+                };
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                const auth = getAuth(app);
+                await signInAnonymously(auth);
+                console.log("Firebase initialized on your project.");
+                appContainer.classList.remove('loading');
+                createParkingLotCards();
+                fetchAllCurrentStatuses();
+                setInterval(fetchAllCurrentStatuses, 30000);
+
+                toggleAnalysisBtn.addEventListener('click', async () => {
+                    const isHidden = analysisSection.style.display === 'none';
+                    if (isHidden) {
+                        analysisContainer.innerHTML = '<p class="text-center text-slate-500">טוען ניתוח מהענן...</p>';
+                        analysisSection.style.display = 'block';
+                        toggleAnalysisBtn.textContent = 'הסתר ניתוח סטטיסטי';
+                        
+                        const querySnapshot = await getDocs(collection(db, "analyzed_parking_stats"));
+                        const analysisData = {};
+                        querySnapshot.forEach(doc => { analysisData[doc.id] = doc.data(); });
+                        renderAnalysis(analysisData);
+
+                    } else {
+                        analysisSection.style.display = 'none';
+                        toggleAnalysisBtn.textContent = 'הצג ניתוח סטטיסטי';
+                    }
+                });
+            } catch (error) {
+                console.error("Critical Firebase Initialization Error:", error);
+                document.body.innerHTML = `<div class="text-center text-red-500 p-8">שגיאה קריטית בחיבור למסד הנתונים. ודא שהשלמת את כל ההוראות להקמת ה-Backend.</div>`;
+            }
+        }
+
+        startApp();
+    </script>
+</body>
+</html>
