@@ -1,8 +1,8 @@
 {
-  "name": "parking-stats-collector",
+  "name": "parking-stats-processor",
   "version": "1.0.0",
-  "description": "Collects parking stats from Ahuzot HaHof",
-  "main": "index.js",
+  "description": "Collects and analyzes parking stats",
+  "main": "collector.js",
   "type": "module",
   "dependencies": {
     "firebase-admin": "^11.10.1",
