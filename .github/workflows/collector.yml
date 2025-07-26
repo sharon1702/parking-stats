@@ -2,7 +2,7 @@ name: Parking Stats Collector
 
 on:
   schedule:
-    - cron: '*/5 * * * *' # הרצה כל 10 דקות
+    - cron: '*/10 * * * *' # הרצה כל 10 דקות
   workflow_dispatch:
 
 jobs:
