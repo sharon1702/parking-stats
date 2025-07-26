@@ -67,6 +67,7 @@
         const FETCH_TIMEOUT = 15000;
         const parkingLots = [ { id: 122, name: 'חניון אסותא' }, { id: 3, name: 'חניון בזל' } ];
         let db;
+        let isAnalysisVisible = false; // --- FIX: State variable to track visibility ---
 
         const appContainer = document.getElementById('app-container');
         const container = document.getElementById('parking-lots-container');
@@ -214,8 +215,10 @@
                 setInterval(fetchAllCurrentStatuses, 30000);
 
                 toggleAnalysisBtn.addEventListener('click', async () => {
-                    const isHidden = analysisSection.style.display === 'none';
-                    if (isHidden) {
+                    // --- FIX: Use the state variable for reliable toggling ---
+                    isAnalysisVisible = !isAnalysisVisible; 
+
+                    if (isAnalysisVisible) {
                         analysisContainer.innerHTML = '<p class="text-center text-slate-500">טוען ניתוח מהענן...</p>';
                         analysisSection.style.display = 'block';
                         toggleAnalysisBtn.textContent = 'הסתר ניתוח סטטיסטי';
