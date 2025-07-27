@@ -64,7 +64,7 @@
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const FETCH_TIMEOUT = 15000;
+        const FETCH_TIMEOUT = 10000; // 10 seconds timeout
         const parkingLots = [ { id: 122, name: 'חניון אסותא' }, { id: 3, name: 'חניון בזל' } ];
         let db;
         let isAnalysisVisible = false;
@@ -98,14 +98,14 @@
             return response;
         }
 
+        // --- NEW: Smart fetch function with fallback ---
         async function fetchCurrentParkingStatus(lot) {
             const targetUrl = `https://www.ahuzot.co.il/Parking/ParkingDetails/?ID=${lot.id}`;
-            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
-            try {
-                const response = await fetchWithTimeout(proxyUrl);
-                if (!response.ok) throw new Error(`Proxy error! status: ${response.status}`);
-                const htmlText = await response.text();
-                if (!htmlText || htmlText.trim() === '') throw new Error("Proxy returned empty response.");
+            const primaryProxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+            const fallbackProxy = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+
+            const processResponse = (htmlText, source) => {
+                console.log(`Data for ${lot.name} fetched from: ${source}`);
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(htmlText, "text/html");
                 let displayContent = 'לא נמצאה תמונה';
@@ -122,11 +122,30 @@
                     else if (imgSrcLower.includes('sagur.png') || imgSrcLower.includes('closed.png')) statusText = 'החניון סגור';
                 }
                 updateStatusDisplay(lot, displayContent, statusText);
+            };
+
+            try {
+                // Attempt 1: Fast, uncached proxy
+                const response = await fetchWithTimeout(primaryProxy);
+                if (!response.ok) throw new Error('Primary proxy failed');
+                const htmlText = await response.text();
+                if (!htmlText || htmlText.trim() === '') throw new Error("Primary proxy returned empty response.");
+                processResponse(htmlText, 'Primary Proxy (allorigins.win)');
             } catch (error) {
-                console.error(`Failed to fetch status for lot ${lot.id} (${lot.name}):`, error);
-                let errorMessage = 'שגיאת תקשורת';
-                if (error.name === 'AbortError') errorMessage = 'שגיאה: זמן קצוב';
-                updateStatusDisplay(lot, errorMessage, null);
+                console.warn(`Primary proxy failed for ${lot.name}:`, error.message, "Attempting fallback...");
+                try {
+                    // Attempt 2: Reliable, cached proxy
+                    const fallbackResponse = await fetchWithTimeout(fallbackProxy);
+                    if (!fallbackResponse.ok) throw new Error('Fallback proxy also failed');
+                    const fallbackHtmlText = await fallbackResponse.text();
+                    if (!fallbackHtmlText || fallbackHtmlText.trim() === '') throw new Error("Fallback proxy returned empty response.");
+                    processResponse(fallbackHtmlText, 'Fallback Proxy (corsproxy.io)');
+                } catch (fallbackError) {
+                    console.error(`All proxies failed for ${lot.name}:`, fallbackError.message);
+                    let errorMessage = 'שגיאת תקשורת';
+                    if (fallbackError.name === 'AbortError') errorMessage = 'שגיאה: זמן קצוב';
+                    updateStatusDisplay(lot, errorMessage, null);
+                }
             }
         }
 
@@ -177,13 +196,10 @@
                             if (hourData && hourData.totalDuration > 0) {
                                 hasDataForDay = true;
                                 dayHtml += `<div class="flex items-center gap-4 my-1"><div class="w-20 text-sm font-mono text-right">${String(hour).padStart(2, '0')}:00</div><div class="flex-grow bg-gray-200 rounded-full h-6 flex overflow-hidden">`;
-                                
-                                // --- FIX: Use English keys to calculate percentages ---
                                 const pGreen = (hourData.available / hourData.totalDuration) * 100;
                                 const pAmber = (hourData.few / hourData.totalDuration) * 100;
                                 const pRed = (hourData.full / hourData.totalDuration) * 100;
                                 const pSlate = (hourData.closed / hourData.totalDuration) * 100;
-
                                 if(pGreen > 0) dayHtml += `<div class="bar bar-green" style="width: ${pGreen}%" title="פנוי: ${pGreen.toFixed(1)}%">${Math.round(pGreen)}%</div>`;
                                 if(pAmber > 0) dayHtml += `<div class="bar bar-amber" style="width: ${pAmber}%" title="מעט מקומות: ${pAmber.toFixed(1)}%">${Math.round(pAmber)}%</div>`;
                                 if(pRed > 0) dayHtml += `<div class="bar bar-red" style="width: ${pRed}%" title="מלא: ${pRed.toFixed(1)}%">${Math.round(pRed)}%</div>`;
