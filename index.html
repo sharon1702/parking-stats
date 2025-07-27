@@ -100,7 +100,6 @@
 
         async function fetchCurrentParkingStatus(lot) {
             const targetUrl = `https://www.ahuzot.co.il/Parking/ParkingDetails/?ID=${lot.id}`;
-            // --- FIX: Switched back to a previously working proxy service ---
             const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
             try {
                 const response = await fetchWithTimeout(proxyUrl);
@@ -171,20 +170,29 @@
                     const dayData = analysisData[dayKey];
                     if (dayData) {
                         html += `<div class="mb-4"><h4 class="font-semibold">${daysInHebrew[day]}</h4>`;
+                        let hasDataForDay = false; // Flag to check if any hour has data
+                        let dayHtml = '';
                         for (let hour = 0; hour < 24; hour++) {
                             const hourData = dayData.hourlyStats[hour];
-                            if (hourData) {
-                                html += `<div class="flex items-center gap-4 my-1"><div class="w-20 text-sm font-mono text-right">${String(hour).padStart(2, '0')}:00</div><div class="flex-grow bg-gray-200 rounded-full h-6 flex overflow-hidden">`;
-                                const pGreen = (hourData['החניון פנוי'] / hourData.totalSamples) * 100;
-                                const pAmber = (hourData['מעט מקומות'] / hourData.totalSamples) * 100;
-                                const pRed = (hourData['החניון מלא'] / hourData.totalSamples) * 100;
-                                const pSlate = (hourData['החניון סגור'] / hourData.totalSamples) * 100;
-                                if(pGreen > 0) html += `<div class="bar bar-green" style="width: ${pGreen}%" title="פנוי: ${pGreen.toFixed(1)}%">${Math.round(pGreen)}%</div>`;
-                                if(pAmber > 0) html += `<div class="bar bar-amber" style="width: ${pAmber}%" title="מעט מקומות: ${pAmber.toFixed(1)}%">${Math.round(pAmber)}%</div>`;
-                                if(pRed > 0) html += `<div class="bar bar-red" style="width: ${pRed}%" title="מלא: ${pRed.toFixed(1)}%">${Math.round(pRed)}%</div>`;
-                                if(pSlate > 0) html += `<div class="bar bar-slate" style="width: ${pSlate}%" title="סגור: ${pSlate.toFixed(1)}%">${Math.round(pSlate)}%</div>`;
-                                html += `</div></div>`;
+                            if (hourData && hourData.totalDuration > 0) {
+                                hasDataForDay = true;
+                                dayHtml += `<div class="flex items-center gap-4 my-1"><div class="w-20 text-sm font-mono text-right">${String(hour).padStart(2, '0')}:00</div><div class="flex-grow bg-gray-200 rounded-full h-6 flex overflow-hidden">`;
+                                const pGreen = (hourData['החניון פנוי'] / hourData.totalDuration) * 100;
+                                const pAmber = (hourData['מעט מקומות'] / hourData.totalDuration) * 100;
+                                const pRed = (hourData['החניון מלא'] / hourData.totalDuration) * 100;
+                                const pSlate = (hourData['החניון סגור'] / hourData.totalDuration) * 100;
+                                if(pGreen > 0) dayHtml += `<div class="bar bar-green" style="width: ${pGreen}%" title="פנוי: ${pGreen.toFixed(1)}%">${Math.round(pGreen)}%</div>`;
+                                if(pAmber > 0) dayHtml += `<div class="bar bar-amber" style="width: ${pAmber}%" title="מעט מקומות: ${pAmber.toFixed(1)}%">${Math.round(pAmber)}%</div>`;
+                                if(pRed > 0) dayHtml += `<div class="bar bar-red" style="width: ${pRed}%" title="מלא: ${pRed.toFixed(1)}%">${Math.round(pRed)}%</div>`;
+                                if(pSlate > 0) dayHtml += `<div class="bar bar-slate" style="width: ${pSlate}%" title="סגור: ${pSlate.toFixed(1)}%">${Math.round(pSlate)}%</div>`;
+                                dayHtml += `</div></div>`;
                             }
+                        }
+                        // --- FIX: Add message if no data was found for the entire day ---
+                        if (hasDataForDay) {
+                            html += dayHtml;
+                        } else {
+                            html += `<p class="text-sm text-slate-500 px-4">אין עדיין מספיק נתונים עבור יום זה.</p>`;
                         }
                         html += `</div>`;
                     }
