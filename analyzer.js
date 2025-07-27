@@ -8,6 +8,15 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
+// --- FIX: Map Hebrew statuses to stable English keys ---
+const STATUS_MAP = {
+  "החניון מלא": "full",
+  "החניון פנוי": "available",
+  "מעט מקומות": "few",
+  "החניון סגור": "closed",
+  "סטטוס לא ידוע": "unknown"
+};
+
 async function analyzeStats() {
   console.log('Starting duration-based analysis...');
   const rawStatsSnapshot = await db.collection('public_parking_stats').orderBy('timestamp', 'asc').get();
@@ -22,7 +31,7 @@ async function analyzeStats() {
   });
 
   const aggregatedData = {};
-  const MAX_DURATION_MINUTES = 20; // Cap duration to avoid skew from long gaps
+  const MAX_DURATION_MINUTES = 20;
 
   for (const lotId in statsByLot) {
       const lotStats = statsByLot[lotId];
@@ -40,6 +49,7 @@ async function analyzeStats() {
           }
 
           const status = currentSample.status;
+          const statusKey = STATUS_MAP[status] || 'unknown';
 
           const hour = parseInt(startTime.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false }).replace('24', '0'));
           const dayOfWeek = startTime.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', weekday: 'long' });
@@ -57,17 +67,17 @@ async function analyzeStats() {
 
           if (!aggregatedData[key].hourlyStats[hour]) {
               aggregatedData[key].hourlyStats[hour] = {
-                  'החניון פנוי': 0,
-                  'מעט מקומות': 0,
-                  'החניון מלא': 0,
-                  'החניון סגור': 0,
-                  'סטטוס לא ידוע': 0,
+                  available: 0,
+                  few: 0,
+                  full: 0,
+                  closed: 0,
+                  unknown: 0,
                   totalDuration: 0
               };
           }
 
-          if (aggregatedData[key].hourlyStats[hour][status] !== undefined) {
-              aggregatedData[key].hourlyStats[hour][status] += durationMillis;
+          if (aggregatedData[key].hourlyStats[hour][statusKey] !== undefined) {
+              aggregatedData[key].hourlyStats[hour][statusKey] += durationMillis;
           }
           aggregatedData[key].hourlyStats[hour].totalDuration += durationMillis;
       }
