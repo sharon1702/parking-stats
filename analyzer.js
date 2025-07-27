@@ -9,66 +9,84 @@ admin.initializeApp({
 const db = admin.firestore();
 
 async function analyzeStats() {
-  console.log('Starting analysis...');
-  const rawStatsSnapshot = await db.collection('public_parking_stats').get();
+  console.log('Starting duration-based analysis...');
+  const rawStatsSnapshot = await db.collection('public_parking_stats').orderBy('timestamp', 'asc').get();
+
+  const statsByLot = {};
+  rawStatsSnapshot.forEach(doc => {
+      const data = doc.data();
+      if (!statsByLot[data.lotId]) {
+          statsByLot[data.lotId] = [];
+      }
+      statsByLot[data.lotId].push(data);
+  });
 
   const aggregatedData = {};
+  const MAX_DURATION_MINUTES = 20; // Cap duration to avoid skew from long gaps
 
-  rawStatsSnapshot.forEach(doc => {
-    const data = doc.data();
-    const date = data.timestamp.toDate();
+  for (const lotId in statsByLot) {
+      const lotStats = statsByLot[lotId];
+      for (let i = 0; i < lotStats.length - 1; i++) {
+          const currentSample = lotStats[i];
+          const nextSample = lotStats[i + 1];
 
-    // --- FIX: Convert timestamp to Israeli timezone before extracting parts ---
-    // This correctly handles DST (UTC+2 / UTC+3)
-    const hourString = date.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false });
-    let hour = parseInt(hourString, 10);
-    if (hour === 24) hour = 0; // Normalize midnight from 24 to 0
+          const startTime = currentSample.timestamp.toDate();
+          const endTime = nextSample.timestamp.toDate();
 
-    const dayString = date.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', weekday: 'long' });
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const dayOfWeek = days.indexOf(dayString); // This gives 0 for Sunday, etc.
+          let durationMillis = endTime.getTime() - startTime.getTime();
 
-    const lotId = data.lotId;
-    const status = data.status;
+          if (durationMillis > MAX_DURATION_MINUTES * 60 * 1000) {
+              durationMillis = MAX_DURATION_MINUTES * 60 * 1000;
+          }
 
-    const key = `${lotId}_${dayOfWeek}`;
-    if (!aggregatedData[key]) {
-      aggregatedData[key] = {
-        lotId: lotId,
-        lotName: data.lotName,
-        dayOfWeek: dayOfWeek,
-        hourlyStats: {}
-      };
-    }
+          const status = currentSample.status;
 
-    if (!aggregatedData[key].hourlyStats[hour]) {
-      aggregatedData[key].hourlyStats[hour] = {
-        'החניון פנוי': 0,
-        'מעט מקומות': 0,
-        'החניון מלא': 0,
-        'החניון סגור': 0,
-        'סטטוס לא ידוע': 0,
-        totalSamples: 0
-      };
-    }
+          const hour = parseInt(startTime.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false }).replace('24', '0'));
+          const dayOfWeek = startTime.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', weekday: 'long' });
+          const dayIndex = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].indexOf(dayOfWeek);
 
-    if (aggregatedData[key].hourlyStats[hour][status] !== undefined) {
-        aggregatedData[key].hourlyStats[hour][status]++;
-    }
-    aggregatedData[key].hourlyStats[hour].totalSamples++;
-  });
+          const key = `${lotId}_${dayIndex}`;
+          if (!aggregatedData[key]) {
+              aggregatedData[key] = {
+                  lotId: currentSample.lotId,
+                  lotName: currentSample.lotName,
+                  dayOfWeek: dayIndex,
+                  hourlyStats: {}
+              };
+          }
+
+          if (!aggregatedData[key].hourlyStats[hour]) {
+              aggregatedData[key].hourlyStats[hour] = {
+                  'החניון פנוי': 0,
+                  'מעט מקומות': 0,
+                  'החניון מלא': 0,
+                  'החניון סגור': 0,
+                  'סטטוס לא ידוע': 0,
+                  totalDuration: 0
+              };
+          }
+
+          if (aggregatedData[key].hourlyStats[hour][status] !== undefined) {
+              aggregatedData[key].hourlyStats[hour][status] += durationMillis;
+          }
+          aggregatedData[key].hourlyStats[hour].totalDuration += durationMillis;
+      }
+  }
 
   console.log('Analysis complete. Writing to Firestore...');
   const batch = db.batch();
   const analysisCollectionRef = db.collection('analyzed_parking_stats');
 
+  const oldAnalysisSnapshot = await analysisCollectionRef.get();
+  oldAnalysisSnapshot.forEach(doc => batch.delete(doc.ref));
+
   for (const key in aggregatedData) {
-    const docRef = analysisCollectionRef.doc(key);
-    batch.set(docRef, aggregatedData[key]);
+      const docRef = analysisCollectionRef.doc(key);
+      batch.set(docRef, aggregatedData[key]);
   }
 
   await batch.commit();
-  console.log('Successfully wrote analysis to Firestore.');
+  console.log('Successfully wrote duration-based analysis to Firestore.');
 }
 
 analyzeStats().catch(error => {
