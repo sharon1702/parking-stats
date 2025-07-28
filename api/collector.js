@@ -2,7 +2,6 @@ import admin from 'firebase-admin';
 import axios from 'axios';
 import { JSDOM } from 'jsdom';
 
-// Initialize Firebase only if it hasn't been initialized yet
 if (!admin.apps.length) {
   const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
   admin.initializeApp({
@@ -17,8 +16,13 @@ const parkingLots = [
   { id: 3, name: "חניון בזל" },
 ];
 
-// This is the main function Vercel will run
 export default async function handler(request, response) {
+  // --- NEW: Security Check ---
+  // Check for the secret key in the query parameters
+  if (request.query.secret !== process.env.CRON_SECRET) {
+    return response.status(401).send('Unauthorized');
+  }
+
   console.log("Running parking stats collection via Vercel trigger.");
   const fetchPromises = parkingLots.map(lot => fetchSingleParkingStatus(lot));
 
