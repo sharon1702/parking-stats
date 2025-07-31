@@ -2,8 +2,8 @@ name: Keep-Alive Ping
 
 on:
   schedule:
-    # הרצה פעם ביום בשעה 02:00 UTC (שזה 4 או 5 בבוקר שעון ישראל)
-    - cron: '0 3 * * *'
+    # הרצה פעם בשעה, כל שעה עגולה
+    - cron: '0 * * * *'
   workflow_dispatch: # מאפשר הרצה ידנית לבדיקה
 
 jobs:
@@ -11,4 +11,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Send a ping to keep the repository active
-        run: echo "Waking up the repository to keep schedulers active."
+        run: echo "Hourly wake-up call to keep schedulers active."
