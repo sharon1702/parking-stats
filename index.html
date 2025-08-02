@@ -227,13 +227,17 @@
             parkingLots.forEach(lot => {
                 html += `<div class="mb-12"><h3 class="text-2xl font-bold text-center mb-4">${lot.name}</h3>`;
                 html += `<table class="w-full border-collapse text-center" style="min-width: 900px;">`;
-                html += `<tr><th class="border p-1 w-20 font-semibold bg-slate-100">יום/שעה</th>`;
+                // Header Row
+                // --- FIX: Added sticky positioning to the first header cell ---
+                html += `<tr><th class="sticky right-0 z-20 border p-1 w-20 font-semibold bg-slate-100">יום/שעה</th>`;
                 for (let hour = 0; hour < 24; hour++) {
                     html += `<th class="border p-1 text-xs font-mono font-semibold bg-slate-100">${String(hour).padStart(2, '0')}</th>`;
                 }
                 html += `</tr>`;
+                // Data Rows
                 for (let day = 0; day < 7; day++) {
-                    html += `<tr><td class="border p-1 font-semibold">${daysInHebrew[day]}</td>`;
+                    // --- FIX: Added sticky positioning to the first data cell ---
+                    html += `<tr><td class="sticky right-0 z-10 border p-1 font-semibold bg-white">${daysInHebrew[day]}</td>`;
                     const dayKey = `${lot.id}_${day}`;
                     const dayData = analysisData[dayKey];
                     for (let hour = 0; hour < 24; hour++) {
@@ -281,7 +285,6 @@
             });
             analysisContainer.innerHTML = html;
 
-            // --- NEW: Auto-scroll to current time on mobile ---
             const highlightedCell = analysisContainer.querySelector('.current-time-highlight');
             if (highlightedCell) {
                 setTimeout(() => {
