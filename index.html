@@ -42,9 +42,8 @@
         .heatmap-cell span {
              text-shadow: 0 0 4px rgba(0,0,0,0.8);
         }
-        /* --- FIX: Changed highlight color to black --- */
         .current-time-highlight {
-            border: 3px solid #000000; /* Black border */
+            border: 3px solid #000000;
             box-shadow: 0 0 15px rgba(0, 0, 0, 0.7);
             animation: pulse 2s infinite;
         }
@@ -281,6 +280,18 @@
                 html += `</table></div>`;
             });
             analysisContainer.innerHTML = html;
+
+            // --- NEW: Auto-scroll to current time on mobile ---
+            const highlightedCell = analysisContainer.querySelector('.current-time-highlight');
+            if (highlightedCell) {
+                setTimeout(() => {
+                    highlightedCell.scrollIntoView({
+                        behavior: 'smooth',
+                        inline: 'center',
+                        block: 'nearest'
+                    });
+                }, 100); 
+            }
         }
         
         async function startApp() {
