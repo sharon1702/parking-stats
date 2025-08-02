@@ -23,13 +23,13 @@
             font-size: 1.5rem; font-weight: bold; color: #334155; z-index: 100;
         }
         .heatmap-cell {
-            min-width: 32px; /* Reduced min-width */
+            min-width: 32px;
             height: 2.5rem;
             border: 1px solid #e2e8f0;
             cursor: pointer;
             transition: transform 0.1s ease-in-out;
             vertical-align: middle;
-            font-size: 0.65rem; /* Slightly smaller font */
+            font-size: 0.65rem;
             font-weight: bold;
             color: white;
             position: relative;
@@ -41,6 +41,17 @@
         }
         .heatmap-cell span {
              text-shadow: 0 0 4px rgba(0,0,0,0.8);
+        }
+        /* --- FIX: Changed highlight color to black --- */
+        .current-time-highlight {
+            border: 3px solid #000000; /* Black border */
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.7);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 10px rgba(0, 0, 0, 0.5); }
+            50% { box-shadow: 0 0 20px rgba(0, 0, 0, 1); }
+            100% { box-shadow: 0 0 10px rgba(0, 0, 0, 0.5); }
         }
         #tooltip {
             position: fixed;
@@ -196,23 +207,32 @@
             lastUpdatedElement.textContent = `עדכון אחרון בזמן אמת: ${new Date().toLocaleTimeString('he-IL')}`;
         }
 
+        function getCurrentIsraeliTime() {
+            const now = new Date();
+            const dayString = now.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', weekday: 'long' });
+            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const dayOfWeek = days.indexOf(dayString);
+            const hour = parseInt(now.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false }).replace('24', '0'));
+            return { day: dayOfWeek, hour: hour };
+        }
+
         function renderAnalysis(analysisData) {
             if (Object.keys(analysisData).length === 0) {
                 analysisContainer.innerHTML = '<p class="text-center text-slate-500">עדיין לא עובדו נתונים סטטיסטיים. השרת מנתח את הנתונים פעם בשעה. אנא נסה שוב מאוחר יותר.</p>'; return;
             }
+            
+            const currentTime = getCurrentIsraeliTime();
             const daysInHebrew = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
             let html = '';
+
             parkingLots.forEach(lot => {
                 html += `<div class="mb-12"><h3 class="text-2xl font-bold text-center mb-4">${lot.name}</h3>`;
                 html += `<table class="w-full border-collapse text-center" style="min-width: 900px;">`;
-                // Header Row
-                // --- FIX: Reduced width of the first column ---
                 html += `<tr><th class="border p-1 w-20 font-semibold bg-slate-100">יום/שעה</th>`;
                 for (let hour = 0; hour < 24; hour++) {
                     html += `<th class="border p-1 text-xs font-mono font-semibold bg-slate-100">${String(hour).padStart(2, '0')}</th>`;
                 }
                 html += `</tr>`;
-                // Data Rows
                 for (let day = 0; day < 7; day++) {
                     html += `<tr><td class="border p-1 font-semibold">${daysInHebrew[day]}</td>`;
                     const dayKey = `${lot.id}_${day}`;
@@ -221,6 +241,11 @@
                         let cellClass = 'bg-gray-200';
                         let tooltipText = 'אין נתונים';
                         let cellContent = '';
+                        
+                        if(day === currentTime.day && hour === currentTime.hour) {
+                            cellClass += ' current-time-highlight';
+                        }
+
                         if (dayData && dayData.hourlyStats[hour] && dayData.hourlyStats[hour].totalDuration > 0) {
                             const hourData = dayData.hourlyStats[hour];
                             const percentages = {
@@ -242,6 +267,9 @@
                                 case 'few': cellClass = 'bg-amber-500'; break;
                                 case 'full': cellClass = 'bg-red-500'; break;
                                 case 'closed': cellClass = 'bg-slate-500'; break;
+                            }
+                             if(day === currentTime.day && hour === currentTime.hour) {
+                                cellClass += ' current-time-highlight';
                             }
                             tooltipText = `פנוי: ${percentages.available.toFixed(0)}%\nמעט: ${percentages.few.toFixed(0)}%\nמלא: ${percentages.full.toFixed(0)}%\nסגור: ${percentages.closed.toFixed(0)}%`;
                             cellContent = `<span>${Math.round(maxPercent)}</span>`;
