@@ -22,15 +22,42 @@
             display: flex; align-items: center; justify-content: center;
             font-size: 1.5rem; font-weight: bold; color: #334155; z-index: 100;
         }
-        .bar { height: 1.5rem; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; color: white; transition: width 0.3s ease-in-out; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); }
-        .bar-green { background-color: #22c55e; }
-        .bar-amber { background-color: #f59e0b; }
-        .bar-red { background-color: #ef4444; }
-        .bar-slate { background-color: #64748b; }
+        .heatmap-cell {
+            min-width: 32px; /* Reduced min-width */
+            height: 2.5rem;
+            border: 1px solid #e2e8f0;
+            cursor: pointer;
+            transition: transform 0.1s ease-in-out;
+            vertical-align: middle;
+            font-size: 0.65rem; /* Slightly smaller font */
+            font-weight: bold;
+            color: white;
+            position: relative;
+            text-align: center;
+        }
+        .heatmap-cell:hover {
+            transform: scale(1.2);
+            z-index: 10;
+        }
+        .heatmap-cell span {
+             text-shadow: 0 0 4px rgba(0,0,0,0.8);
+        }
+        #tooltip {
+            position: fixed;
+            display: none;
+            padding: 0.75rem;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            pointer-events: none;
+            z-index: 1000;
+            white-space: pre-line;
+        }
     </style>
 </head>
 <body class="bg-slate-100 py-10">
-    <div id="app-container" class="w-full max-w-6xl mx-auto px-4 loading">
+    <div id="app-container" class="w-full max-w-7xl mx-auto px-4 loading">
         <!-- כותרת -->
         <div class="text-center mb-8">
             <h1 class="text-3xl font-bold text-slate-800 mb-2">בדיקת חניונים בזמן אמת</h1>
@@ -49,22 +76,33 @@
 
         <!-- אזור ניתוח סטטיסטי -->
         <div id="analysis-section" class="mt-8 bg-white p-6 rounded-xl shadow-lg">
-            <h2 class="text-2xl font-bold text-center text-slate-800 mb-4">ניתוח סטטיסטי לפי יום ושעה</h2>
-            <p class="text-center text-sm text-slate-500 mb-6">הנתונים מעובדים פעם בשעה על ידי שרת. מוצגת התפלגות הסטטוסים לכל שעה.</p>
-            <div id="analysis-container"></div>
+            <h2 class="text-2xl font-bold text-center text-slate-800 mb-4">מפת חום סטטיסטית</h2>
+            <p class="text-center text-sm text-slate-500 mb-6">הטבלה מציגה את מצב החנייה הנפוץ ביותר לכל שעה. לחץ על תא לקבלת פירוט.</p>
+            <div id="analysis-container" class="overflow-x-auto"></div>
+            <!-- מקרא צבעים -->
+            <div class="flex justify-center items-center gap-4 mt-4 text-sm flex-wrap">
+                <div class="flex items-center gap-2"><div class="w-4 h-4 rounded-full bg-green-500"></div><span>פנוי</span></div>
+                <div class="flex items-center gap-2"><div class="w-4 h-4 rounded-full bg-amber-500"></div><span>מעט מקומות</span></div>
+                <div class="flex items-center gap-2"><div class="w-4 h-4 rounded-full bg-red-500"></div><span>מלא</span></div>
+                <div class="flex items-center gap-2"><div class="w-4 h-4 rounded-full bg-slate-500"></div><span>סגור</span></div>
+                <div class="flex items-center gap-2"><div class="w-4 h-4 rounded-full bg-gray-200"></div><span>אין נתונים</span></div>
+            </div>
         </div>
         
         <footer class="text-center mt-8 text-sm text-slate-500">
             <p>המידע נלקח מאתר אחוזות החוף. הניתוח מבוסס על נתונים שנאספו על ידי המערכת.</p>
         </footer>
     </div>
+    
+    <!-- Tooltip element for hover/click details -->
+    <div id="tooltip"></div>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const FETCH_TIMEOUT = 10000; // 10 seconds timeout
+        const FETCH_TIMEOUT = 15000;
         const parkingLots = [ { id: 122, name: 'חניון אסותא' }, { id: 3, name: 'חניון בזל' } ];
         let db;
         let isAnalysisVisible = false;
@@ -75,6 +113,7 @@
         const toggleAnalysisBtn = document.getElementById('toggle-analysis-btn');
         const analysisSection = document.getElementById('analysis-section');
         const analysisContainer = document.getElementById('analysis-container');
+        const tooltip = document.getElementById('tooltip');
 
         function createParkingLotCards() {
             parkingLots.forEach(lot => {
@@ -98,14 +137,14 @@
             return response;
         }
 
-        // --- NEW: Smart fetch function with fallback ---
         async function fetchCurrentParkingStatus(lot) {
             const targetUrl = `https://www.ahuzot.co.il/Parking/ParkingDetails/?ID=${lot.id}`;
-            const primaryProxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-            const fallbackProxy = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
-
-            const processResponse = (htmlText, source) => {
-                console.log(`Data for ${lot.name} fetched from: ${source}`);
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+            try {
+                const response = await fetchWithTimeout(proxyUrl);
+                if (!response.ok) throw new Error(`Proxy error! status: ${response.status}`);
+                const htmlText = await response.text();
+                if (!htmlText || htmlText.trim() === '') throw new Error("Proxy returned empty response.");
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(htmlText, "text/html");
                 let displayContent = 'לא נמצאה תמונה';
@@ -122,30 +161,11 @@
                     else if (imgSrcLower.includes('sagur.png') || imgSrcLower.includes('closed.png')) statusText = 'החניון סגור';
                 }
                 updateStatusDisplay(lot, displayContent, statusText);
-            };
-
-            try {
-                // Attempt 1: Fast, uncached proxy
-                const response = await fetchWithTimeout(primaryProxy);
-                if (!response.ok) throw new Error('Primary proxy failed');
-                const htmlText = await response.text();
-                if (!htmlText || htmlText.trim() === '') throw new Error("Primary proxy returned empty response.");
-                processResponse(htmlText, 'Primary Proxy (allorigins.win)');
             } catch (error) {
-                console.warn(`Primary proxy failed for ${lot.name}:`, error.message, "Attempting fallback...");
-                try {
-                    // Attempt 2: Reliable, cached proxy
-                    const fallbackResponse = await fetchWithTimeout(fallbackProxy);
-                    if (!fallbackResponse.ok) throw new Error('Fallback proxy also failed');
-                    const fallbackHtmlText = await fallbackResponse.text();
-                    if (!fallbackHtmlText || fallbackHtmlText.trim() === '') throw new Error("Fallback proxy returned empty response.");
-                    processResponse(fallbackHtmlText, 'Fallback Proxy (corsproxy.io)');
-                } catch (fallbackError) {
-                    console.error(`All proxies failed for ${lot.name}:`, fallbackError.message);
-                    let errorMessage = 'שגיאת תקשורת';
-                    if (fallbackError.name === 'AbortError') errorMessage = 'שגיאה: זמן קצוב';
-                    updateStatusDisplay(lot, errorMessage, null);
-                }
+                console.error(`Failed to fetch status for lot ${lot.id} (${lot.name}):`, error);
+                let errorMessage = 'שגיאת תקשורת';
+                if (error.name === 'AbortError') errorMessage = 'שגיאה: זמן קצוב';
+                updateStatusDisplay(lot, errorMessage, null);
             }
         }
 
@@ -180,42 +200,57 @@
             if (Object.keys(analysisData).length === 0) {
                 analysisContainer.innerHTML = '<p class="text-center text-slate-500">עדיין לא עובדו נתונים סטטיסטיים. השרת מנתח את הנתונים פעם בשעה. אנא נסה שוב מאוחר יותר.</p>'; return;
             }
-            const daysInHebrew = ['יום ראשון', 'יום שני', 'יום שלישי', 'יום רביעי', 'יום חמישי', 'יום שישי', 'שבת'];
+            const daysInHebrew = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
             let html = '';
             parkingLots.forEach(lot => {
-                html += `<div class="mb-8"><h3 class="text-xl font-bold text-center mb-4">${lot.name}</h3>`;
+                html += `<div class="mb-12"><h3 class="text-2xl font-bold text-center mb-4">${lot.name}</h3>`;
+                html += `<table class="w-full border-collapse text-center" style="min-width: 900px;">`;
+                // Header Row
+                // --- FIX: Reduced width of the first column ---
+                html += `<tr><th class="border p-1 w-20 font-semibold bg-slate-100">יום/שעה</th>`;
+                for (let hour = 0; hour < 24; hour++) {
+                    html += `<th class="border p-1 text-xs font-mono font-semibold bg-slate-100">${String(hour).padStart(2, '0')}</th>`;
+                }
+                html += `</tr>`;
+                // Data Rows
                 for (let day = 0; day < 7; day++) {
+                    html += `<tr><td class="border p-1 font-semibold">${daysInHebrew[day]}</td>`;
                     const dayKey = `${lot.id}_${day}`;
                     const dayData = analysisData[dayKey];
-                    if (dayData) {
-                        html += `<div class="mb-4"><h4 class="font-semibold">${daysInHebrew[day]}</h4>`;
-                        let hasDataForDay = false;
-                        let dayHtml = '';
-                        for (let hour = 0; hour < 24; hour++) {
+                    for (let hour = 0; hour < 24; hour++) {
+                        let cellClass = 'bg-gray-200';
+                        let tooltipText = 'אין נתונים';
+                        let cellContent = '';
+                        if (dayData && dayData.hourlyStats[hour] && dayData.hourlyStats[hour].totalDuration > 0) {
                             const hourData = dayData.hourlyStats[hour];
-                            if (hourData && hourData.totalDuration > 0) {
-                                hasDataForDay = true;
-                                dayHtml += `<div class="flex items-center gap-4 my-1"><div class="w-20 text-sm font-mono text-right">${String(hour).padStart(2, '0')}:00</div><div class="flex-grow bg-gray-200 rounded-full h-6 flex overflow-hidden">`;
-                                const pGreen = (hourData.available / hourData.totalDuration) * 100;
-                                const pAmber = (hourData.few / hourData.totalDuration) * 100;
-                                const pRed = (hourData.full / hourData.totalDuration) * 100;
-                                const pSlate = (hourData.closed / hourData.totalDuration) * 100;
-                                if(pGreen > 0) dayHtml += `<div class="bar bar-green" style="width: ${pGreen}%" title="פנוי: ${pGreen.toFixed(1)}%">${Math.round(pGreen)}%</div>`;
-                                if(pAmber > 0) dayHtml += `<div class="bar bar-amber" style="width: ${pAmber}%" title="מעט מקומות: ${pAmber.toFixed(1)}%">${Math.round(pAmber)}%</div>`;
-                                if(pRed > 0) dayHtml += `<div class="bar bar-red" style="width: ${pRed}%" title="מלא: ${pRed.toFixed(1)}%">${Math.round(pRed)}%</div>`;
-                                if(pSlate > 0) dayHtml += `<div class="bar bar-slate" style="width: ${pSlate}%" title="סגור: ${pSlate.toFixed(1)}%">${Math.round(pSlate)}%</div>`;
-                                dayHtml += `</div></div>`;
+                            const percentages = {
+                                available: (hourData.available / hourData.totalDuration) * 100,
+                                few: (hourData.few / hourData.totalDuration) * 100,
+                                full: (hourData.full / hourData.totalDuration) * 100,
+                                closed: (hourData.closed / hourData.totalDuration) * 100,
+                            };
+                            let dominantStatus = 'unknown';
+                            let maxPercent = -1;
+                            for (const status in percentages) {
+                                if (percentages[status] > maxPercent) {
+                                    maxPercent = percentages[status];
+                                    dominantStatus = status;
+                                }
                             }
+                            switch (dominantStatus) {
+                                case 'available': cellClass = 'bg-green-500'; break;
+                                case 'few': cellClass = 'bg-amber-500'; break;
+                                case 'full': cellClass = 'bg-red-500'; break;
+                                case 'closed': cellClass = 'bg-slate-500'; break;
+                            }
+                            tooltipText = `פנוי: ${percentages.available.toFixed(0)}%\nמעט: ${percentages.few.toFixed(0)}%\nמלא: ${percentages.full.toFixed(0)}%\nסגור: ${percentages.closed.toFixed(0)}%`;
+                            cellContent = `<span>${Math.round(maxPercent)}</span>`;
                         }
-                        if (hasDataForDay) {
-                            html += dayHtml;
-                        } else {
-                            html += `<p class="text-sm text-slate-500 px-4">אין עדיין מספיק נתונים עבור יום זה.</p>`;
-                        }
-                        html += `</div>`;
+                        html += `<td class="heatmap-cell ${cellClass}" data-tooltip="${tooltipText}">${cellContent}</td>`;
                     }
+                    html += `</tr>`;
                 }
-                html += `</div>`;
+                html += `</table></div>`;
             });
             analysisContainer.innerHTML = html;
         }
@@ -243,22 +278,66 @@
 
                 toggleAnalysisBtn.addEventListener('click', async () => {
                     isAnalysisVisible = !isAnalysisVisible; 
-
                     if (isAnalysisVisible) {
                         analysisContainer.innerHTML = '<p class="text-center text-slate-500">טוען ניתוח מהענן...</p>';
                         analysisSection.style.display = 'block';
                         toggleAnalysisBtn.textContent = 'הסתר ניתוח סטטיסטי';
-                        
                         const querySnapshot = await getDocs(collection(db, "analyzed_parking_stats"));
                         const analysisData = {};
                         querySnapshot.forEach(doc => { analysisData[doc.id] = doc.data(); });
                         renderAnalysis(analysisData);
-
                     } else {
                         analysisSection.style.display = 'none';
                         toggleAnalysisBtn.textContent = 'הצג ניתוח סטטיסטי';
                     }
                 });
+
+                let tooltipVisible = false;
+
+                analysisContainer.addEventListener('mouseover', (e) => {
+                    let targetCell = e.target.closest('.heatmap-cell');
+                    if (targetCell) {
+                        tooltip.textContent = targetCell.dataset.tooltip;
+                        tooltip.style.display = 'block';
+                    }
+                });
+
+                analysisContainer.addEventListener('mousemove', (e) => {
+                    let targetCell = e.target.closest('.heatmap-cell');
+                    if (targetCell) {
+                        tooltip.style.left = `${e.clientX + 15}px`;
+                        tooltip.style.top = `${e.clientY + 15}px`;
+                    }
+                });
+
+                analysisContainer.addEventListener('mouseout', (e) => {
+                    let targetCell = e.target.closest('.heatmap-cell');
+                    if (targetCell) {
+                        if (!tooltipVisible) {
+                             tooltip.style.display = 'none';
+                        }
+                    }
+                });
+
+                analysisContainer.addEventListener('click', (e) => {
+                    let targetCell = e.target.closest('.heatmap-cell');
+                    if (targetCell) {
+                        tooltipVisible = true;
+                        tooltip.textContent = targetCell.dataset.tooltip;
+                        tooltip.style.display = 'block';
+                        tooltip.style.left = `${e.clientX + 15}px`;
+                        tooltip.style.top = `${e.clientY + 15}px`;
+                    }
+                });
+
+                document.addEventListener('click', (e) => {
+                    if (!analysisContainer.contains(e.target)) {
+                        tooltipVisible = false;
+                        tooltip.style.display = 'none';
+                    }
+                }, true);
+
+
             } catch (error) {
                 console.error("Critical Firebase Initialization Error:", error);
                 document.body.innerHTML = `<div class="text-center text-red-500 p-8">שגיאה קריטית בחיבור למסד הנתונים. ודא שהשלמת את כל ההוראות להקמת ה-Backend.</div>`;
