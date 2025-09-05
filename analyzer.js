@@ -1,3 +1,4 @@
+// analyzer.js
 import admin from 'firebase-admin';
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -8,7 +9,7 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// --- FIX: Map Hebrew statuses to stable English keys ---
+// --- Map Hebrew statuses to stable English keys ---
 const STATUS_MAP = {
   "החניון מלא": "full",
   "החניון פנוי": "available",
@@ -17,89 +18,136 @@ const STATUS_MAP = {
   "סטטוס לא ידוע": "unknown"
 };
 
-async function analyzeStats() {
-  console.log('Starting duration-based analysis...');
-  const rawStatsSnapshot = await db.collection('public_parking_stats').orderBy('timestamp', 'asc').get();
+// --- FIX: Use a meta document to track the last successful run timestamp ---
+const LAST_RUN_DOC_ID = 'last_successful_run';
 
-  const statsByLot = {};
-  rawStatsSnapshot.forEach(doc => {
-      const data = doc.data();
-      if (!statsByLot[data.lotId]) {
-          statsByLot[data.lotId] = [];
-      }
-      statsByLot[data.lotId].push(data);
-  });
+async function analyzeAndAggregate() {
+  console.log("Starting incremental analysis...");
+
+  let lastRunTimestamp = new Date(0);
+  const metaDocRef = db.collection('analysis_meta').doc(LAST_RUN_DOC_ID);
+  const metaDoc = await metaDocRef.get();
+
+  if (metaDoc.exists) {
+    lastRunTimestamp = metaDoc.data().timestamp.toDate();
+  }
+
+  // --- FIX: Fetch only new raw data entries since the last run ---
+  const rawStatsSnapshot = await db.collection('public_parking_stats')
+    .where('timestamp', '>', lastRunTimestamp)
+    .orderBy('timestamp', 'asc')
+    .get();
+
+  if (rawStatsSnapshot.empty) {
+    console.log("No new data to analyze. Exiting.");
+    return;
+  }
+  
+  const newRawStats = [];
+  rawStatsSnapshot.forEach(doc => newRawStats.push(doc.data()));
 
   const aggregatedData = {};
   const MAX_DURATION_MINUTES = 20;
 
-  for (const lotId in statsByLot) {
-      const lotStats = statsByLot[lotId];
-      for (let i = 0; i < lotStats.length - 1; i++) {
-          const currentSample = lotStats[i];
-          const nextSample = lotStats[i + 1];
+  for (let i = 0; i < newRawStats.length - 1; i++) {
+    const currentSample = newRawStats[i];
+    const nextSample = newRawStats[i + 1];
 
-          const startTime = currentSample.timestamp.toDate();
-          const endTime = nextSample.timestamp.toDate();
+    const startTime = currentSample.timestamp.toDate();
+    const endTime = nextSample.timestamp.toDate();
+    
+    // Calculate the duration
+    let durationMillis = endTime.getTime() - startTime.getTime();
+    if (durationMillis > MAX_DURATION_MINUTES * 60 * 1000) {
+      durationMillis = MAX_DURATION_MINUTES * 60 * 1000;
+    }
+    
+    const status = currentSample.status;
+    const statusKey = STATUS_MAP[status] || 'unknown';
 
-          let durationMillis = endTime.getTime() - startTime.getTime();
+    // Get date and time details in Israel time zone
+    const dayOfWeek = startTime.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', weekday: 'long' });
+    const dayIndex = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].indexOf(dayOfWeek);
+    const hour = parseInt(startTime.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false }).replace('24', '0'));
+    
+    const lotId = currentSample.lotId;
+    const key = `${lotId}_${dayIndex}`;
 
-          if (durationMillis > MAX_DURATION_MINUTES * 60 * 1000) {
-              durationMillis = MAX_DURATION_MINUTES * 60 * 1000;
-          }
+    if (!aggregatedData[key]) {
+      aggregatedData[key] = {
+        lotId: currentSample.lotId,
+        lotName: currentSample.lotName,
+        dayOfWeek: dayIndex,
+        hourlyStats: {}
+      };
+    }
+    
+    if (!aggregatedData[key].hourlyStats[hour]) {
+      aggregatedData[key].hourlyStats[hour] = {
+        available: 0,
+        few: 0,
+        full: 0,
+        closed: 0,
+        unknown: 0,
+        totalDuration: 0
+      };
+    }
 
-          const status = currentSample.status;
-          const statusKey = STATUS_MAP[status] || 'unknown';
-
-          const hour = parseInt(startTime.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false }).replace('24', '0'));
-          const dayOfWeek = startTime.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', weekday: 'long' });
-          const dayIndex = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].indexOf(dayOfWeek);
-
-          const key = `${lotId}_${dayIndex}`;
-          if (!aggregatedData[key]) {
-              aggregatedData[key] = {
-                  lotId: currentSample.lotId,
-                  lotName: currentSample.lotName,
-                  dayOfWeek: dayIndex,
-                  hourlyStats: {}
-              };
-          }
-
-          if (!aggregatedData[key].hourlyStats[hour]) {
-              aggregatedData[key].hourlyStats[hour] = {
-                  available: 0,
-                  few: 0,
-                  full: 0,
-                  closed: 0,
-                  unknown: 0,
-                  totalDuration: 0
-              };
-          }
-
-          if (aggregatedData[key].hourlyStats[hour][statusKey] !== undefined) {
-              aggregatedData[key].hourlyStats[hour][statusKey] += durationMillis;
-          }
-          aggregatedData[key].hourlyStats[hour].totalDuration += durationMillis;
-      }
+    if (aggregatedData[key].hourlyStats[hour][statusKey] !== undefined) {
+      aggregatedData[key].hourlyStats[hour][statusKey] += durationMillis;
+    }
+    aggregatedData[key].hourlyStats[hour].totalDuration += durationMillis;
   }
 
-  console.log('Analysis complete. Writing to Firestore...');
-  const batch = db.batch();
+  console.log('Analysis complete. Updating Firestore...');
   const analysisCollectionRef = db.collection('analyzed_parking_stats');
+  const batch = db.batch();
 
-  const oldAnalysisSnapshot = await analysisCollectionRef.get();
-  oldAnalysisSnapshot.forEach(doc => batch.delete(doc.ref));
-
+  // --- FIX: Read existing aggregated data to update it instead of overwriting ---
+  const existingAnalysisSnapshot = await analysisCollectionRef.get();
+  const existingAnalysisData = {};
+  existingAnalysisSnapshot.forEach(doc => {
+      existingAnalysisData[doc.id] = doc.data();
+  });
+  
   for (const key in aggregatedData) {
-      const docRef = analysisCollectionRef.doc(key);
-      batch.set(docRef, aggregatedData[key]);
+    const docRef = analysisCollectionRef.doc(key);
+    const newStats = aggregatedData[key];
+    const existingStats = existingAnalysisData[key];
+
+    if (existingStats) {
+        // Merge the new data with the existing data
+        for (const hour in newStats.hourlyStats) {
+            if (!existingStats.hourlyStats[hour]) {
+                existingStats.hourlyStats[hour] = { available: 0, few: 0, full: 0, closed: 0, unknown: 0, totalDuration: 0 };
+            }
+            const newHourStats = newStats.hourlyStats[hour];
+            const existingHourStats = existingStats.hourlyStats[hour];
+            
+            existingHourStats.available += newHourStats.available;
+            existingHourStats.few += newHourStats.few;
+            existingHourStats.full += newHourStats.full;
+            existingHourStats.closed += newHourStats.closed;
+            existingHourStats.unknown += newHourStats.unknown;
+            existingHourStats.totalDuration += newHourStats.totalDuration;
+        }
+        batch.set(docRef, existingStats); // Use set to update the entire document
+    } else {
+        // If the document doesn't exist, create it with the new data
+        batch.set(docRef, newStats);
+    }
   }
 
+  // --- FIX: Commit changes and then update the timestamp ---
   await batch.commit();
-  console.log('Successfully wrote duration-based analysis to Firestore.');
+
+  // --- FIX: Update the last successful run timestamp after a successful commit ---
+  await metaDocRef.set({ timestamp: new Date() });
+
+  console.log('Successfully updated incremental analysis to Firestore.');
 }
 
-analyzeStats().catch(error => {
+analyzeAndAggregate().catch(error => {
   console.error("Error during analysis:", error);
   process.exit(1);
 });
