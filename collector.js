@@ -18,7 +18,7 @@ const parkingLots = [
 async function fetchSingleParkingStatus(lot) {
   const targetUrl = `https://www.ahuzot.co.il/Parking/ParkingDetails/?ID=${lot.id}`;
   try {
-    const response = await axios.get(targetUrl, { timeout: 20000 });
+    const response = await axios.get(targetUrl, { timeout: 30000 });
     const htmlText = response.data;
     if (!htmlText) {
       console.error(`Empty response for lot ${lot.id}`);
