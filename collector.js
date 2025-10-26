@@ -64,7 +64,7 @@ async function fetchSingleParkingStatus(lot) {
     console.error(`Failed to fetch status for lot ${lot.id} (${lot.name}): ${error.message}`);
     return false; // החזרת כישלון
   }
-}
+} // סגירה של פונקציית fetchSingleParkingStatus
 
 /**
  * פונקציית ריצה ראשית שמנהלת את כל התהליך
@@ -93,8 +93,10 @@ async function runCollectionJob() {
   } else {
     console.log("Parking stats collection job finished successfully.");
   }
-}
+} // <--- !!! הנה הסוגר שהיה חסר !!!
 
 // --- הפעלת התהליך ---
 runCollectionJob().catch(err => {
-  console
+  console.error("A critical unhandled error stopped the collector job:", err);
+  process.exit(1);
+});
