@@ -68,28 +68,23 @@
 </head>
 <body class="bg-slate-100 py-10">
     <div id="app-container" class="w-full max-w-7xl mx-auto px-4 loading">
-        <!-- כותרת -->
         <div class="text-center mb-8">
             <h1 class="text-3xl font-bold text-slate-800 mb-2">בדיקת חניונים בזמן אמת</h1>
             <p id="last-updated" class="text-slate-500">המידע מתעדכן אוטומטית.</p>
         </div>
 
-        <!-- תצוגה בזמן אמת -->
         <div id="parking-lots-container" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
 
-        <!-- כפתור ניווט -->
         <div class="mt-12 text-center">
             <button id="toggle-analysis-btn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-all text-lg">
                 הצג ניתוח סטטיסטי
             </button>
         </div>
 
-        <!-- אזור ניתוח סטטיסטי -->
         <div id="analysis-section" class="mt-8 bg-white p-6 rounded-xl shadow-lg">
             <h2 class="text-2xl font-bold text-center text-slate-800 mb-4">מפת חום סטטיסטית</h2>
             <p class="text-center text-sm text-slate-500 mb-6">הטבלה מציגה את מצב החנייה הנפוץ ביותר לכל שעה. לחץ על תא לקבלת פירוט.</p>
             <div id="analysis-container" class="overflow-x-auto"></div>
-            <!-- מקרא צבעים -->
             <div class="flex justify-center items-center gap-4 mt-4 text-sm flex-wrap">
                 <div class="flex items-center gap-2"><div class="w-4 h-4 rounded-full bg-green-500"></div><span>פנוי</span></div>
                 <div class="flex items-center gap-2"><div class="w-4 h-4 rounded-full bg-amber-500"></div><span>מעט מקומות</span></div>
@@ -104,7 +99,6 @@
         </footer>
     </div>
     
-    <!-- Tooltip element for hover/click details -->
     <div id="tooltip"></div>
 
     <script type="module">
@@ -112,7 +106,7 @@
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const FETCH_TIMEOUT = 15000;
+        const FETCH_TIMEOUT = 30000; // Increased to 30 seconds
         const parkingLots = [ { id: 122, name: 'חניון אסותא' }, { id: 3, name: 'חניון בזל' } ];
         let db;
         let isAnalysisVisible = false;
@@ -148,8 +142,12 @@
         }
 
         async function fetchCurrentParkingStatus(lot) {
-            const targetUrl = `https://www.ahuzot.co.il/Parking/ParkingDetails/?ID=${lot.id}`;
-            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+            // Add a random timestamp to the target URL to prevent the Proxy from returning cached (stale) data
+            const targetUrl = `https://www.ahuzot.co.il/Parking/ParkingDetails/?ID=${lot.id}&t=${new Date().getTime()}`;
+            
+            // Changed Proxy to allorigins.win
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+            
             try {
                 const response = await fetchWithTimeout(proxyUrl);
                 if (!response.ok) throw new Error(`Proxy error! status: ${response.status}`);
@@ -228,7 +226,6 @@
                 html += `<div class="mb-12"><h3 class="text-2xl font-bold text-center mb-4">${lot.name}</h3>`;
                 html += `<table class="w-full border-collapse text-center" style="min-width: 900px;">`;
                 // Header Row
-                // --- FIX: Added sticky positioning to the first header cell ---
                 html += `<tr><th class="sticky right-0 z-20 border p-1 w-20 font-semibold bg-slate-100">יום/שעה</th>`;
                 for (let hour = 0; hour < 24; hour++) {
                     html += `<th class="border p-1 text-xs font-mono font-semibold bg-slate-100">${String(hour).padStart(2, '0')}</th>`;
@@ -236,7 +233,6 @@
                 html += `</tr>`;
                 // Data Rows
                 for (let day = 0; day < 7; day++) {
-                    // --- FIX: Added sticky positioning to the first data cell ---
                     html += `<tr><td class="sticky right-0 z-10 border p-1 font-semibold bg-white">${daysInHebrew[day]}</td>`;
                     const dayKey = `${lot.id}_${day}`;
                     const dayData = analysisData[dayKey];
